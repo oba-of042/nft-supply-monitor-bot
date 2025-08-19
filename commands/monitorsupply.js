@@ -1,6 +1,6 @@
 // commands/monitorsupply.js
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { getAllMonitors } from '../db.js';
+import { getAllMonitors, updateMonitor } from '../db.js';
 import { fetchCollectionStats } from '../utils/api.js';
 
 export const data = new SlashCommandBuilder()
@@ -18,17 +18,30 @@ export async function execute(interaction) {
   }
 
   let description = '';
+  const alerts = [];
+
   for (const monitor of monitors) {
+    const { id, name, contractAddress, chain, threshold, alerted } = monitor;
+
     try {
-      const stats = await fetchCollectionStats(monitor.contractAddress, 'ethereum');
+      const stats = await fetchCollectionStats(contractAddress, chain || 'ethereum');
       if (stats?.collections?.length) {
         const col = stats.collections[0];
-        description += `**${monitor.name}**: ${col.tokenCount} tokens, floor: ${col.floorAsk?.price?.amount?.decimal || 'N/A'} ETH\n`;
+        const tokenCount = parseInt(col.tokenCount || 0, 10);
+        const floor = col.floorAsk?.price?.amount?.decimal || 'N/A';
+
+        description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\nSupply: **${tokenCount}** / Threshold: **${threshold ?? 'N/A'}**\nFloor: ${floor} ETH\n\n`;
+
+        // Threshold alert check
+        if (threshold && tokenCount >= threshold && !alerted) {
+          alerts.push(`🚨 **${name}** on ${chain} has reached supply **${tokenCount}** (threshold: ${threshold})!`);
+          updateMonitor(id, { alerted: true });
+        }
       } else {
-        description += `**${monitor.name}**: No stats found\n`;
+        description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\nNo stats found\n\n`;
       }
-    } catch {
-      description += `**${monitor.name}**: Error fetching data\n`;
+    } catch (err) {
+      description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\n⚠️ Error fetching data\n\n`;
     }
   }
 
@@ -39,4 +52,9 @@ export async function execute(interaction) {
     .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
+
+  // Send threshold alerts separately
+  for (const alert of alerts) {
+    await interaction.channel.send(alert);
+  }
 }

@@ -1,4 +1,4 @@
-   // db.js
+// db.js
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -19,6 +19,18 @@ try {
   console.error('Failed to load DB:', err);
 }
 
+// Ensure defaults for old monitors
+function normalizeMonitor(m) {
+  return {
+    id: m.id || Date.now().toString(),
+    name: m.name,
+    contractAddress: m.contractAddress || m.contract || '',
+    chain: m.chain || 'ethereum',
+    threshold: typeof m.threshold === 'number' ? m.threshold : null,
+    alerted: typeof m.alerted === 'boolean' ? m.alerted : false,
+  };
+}
+
 // Save function
 function save() {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
@@ -26,16 +38,17 @@ function save() {
 
 // Monitors
 export function getAllMonitors() {
-  return data.monitors || [];
+  if (!data.monitors) data.monitors = [];
+  return data.monitors.map(normalizeMonitor);
 }
 
 export function getMonitorByName(name) {
-  return data.monitors?.find(m => m.name === name) || null;
+  return getAllMonitors().find(m => m.name === name) || null;
 }
 
 export function addMonitor(monitor) {
   if (!data.monitors) data.monitors = [];
-  data.monitors.push(monitor);
+  data.monitors.push(normalizeMonitor(monitor));
   save();
 }
 
@@ -43,7 +56,10 @@ export function updateMonitor(id, update) {
   if (!data.monitors) return false;
   const idx = data.monitors.findIndex(m => m.id === id);
   if (idx !== -1) {
-    data.monitors[idx] = { ...data.monitors[idx], ...update };
+    data.monitors[idx] = normalizeMonitor({
+      ...data.monitors[idx],
+      ...update,
+    });
     save();
     return true;
   }
