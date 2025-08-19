@@ -1,0 +1,7 @@
+module.exports = {
+  POLL_INTERVAL_MS: 30000,
+  MONITOR_CHECK_TIMEOUT_MS: 20000,
+  WALLET_POLL_INTERVAL_MS: 20000,
+  STORAGE_PATH: './storage',
+  LOG_PREFIX: process.env.LOG_PREFIX || '[NFT-MONITOR]'
+};
