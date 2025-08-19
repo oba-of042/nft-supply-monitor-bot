@@ -21,16 +21,22 @@ export async function execute(interaction) {
   const alerts = [];
 
   for (const monitor of monitors) {
-    const { id, name, contractAddress, chain, threshold, alerted } = monitor;
+    // normalize monitor fields
+    const id = monitor.id;
+    const name = monitor.name || 'Unnamed';
+    const contract = monitor.contract || monitor.contractAddress; // support old entries
+    const chain = monitor.chain || 'ethereum';
+    const threshold = monitor.threshold ?? null;
+    const alerted = monitor.alerted ?? false;
 
     try {
-      const stats = await fetchCollectionStats(contractAddress, chain || 'ethereum');
+      const stats = await fetchCollectionStats(contract, chain);
       if (stats?.collections?.length) {
         const col = stats.collections[0];
         const tokenCount = parseInt(col.tokenCount || 0, 10);
-        const floor = col.floorAsk?.price?.amount?.decimal || 'N/A';
+        const floor = col.floorAsk?.price?.amount?.decimal?.toString() || 'N/A';
 
-        description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\nSupply: **${tokenCount}** / Threshold: **${threshold ?? 'N/A'}**\nFloor: ${floor} ETH\n\n`;
+        description += `**${name}** (${chain})\n🔗 \`${contract}\`\nSupply: **${tokenCount}** / Threshold: **${threshold ?? 'N/A'}**\nFloor: ${floor} ETH\n\n`;
 
         // Threshold alert check
         if (threshold && tokenCount >= threshold && !alerted) {
@@ -38,10 +44,10 @@ export async function execute(interaction) {
           updateMonitor(id, { alerted: true });
         }
       } else {
-        description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\nNo stats found\n\n`;
+        description += `**${name}** (${chain})\n🔗 \`${contract}\`\nNo stats found\n\n`;
       }
     } catch (err) {
-      description += `**${name}** (${chain})\n🔗 \`${contractAddress}\`\n⚠️ Error fetching data\n\n`;
+      description += `**${name}** (${chain})\n🔗 \`${contract}\`\n⚠️ Error fetching data\n\n`;
     }
   }
 

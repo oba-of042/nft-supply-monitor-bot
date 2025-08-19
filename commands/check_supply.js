@@ -7,7 +7,8 @@ export const data = new SlashCommandBuilder()
   .setName('check_supply')
   .setDescription('Check current supply status of a monitor')
   .addStringOption(option =>
-    option.setName('name').setDescription('Monitor name').setRequired(true));
+    option.setName('name').setDescription('Monitor name').setRequired(true)
+  );
 
 export async function execute(interaction) {
   const name = interaction.options.getString('name');
@@ -21,24 +22,30 @@ export async function execute(interaction) {
   }
 
   try {
-    const stats = await fetchCollectionStats(monitor.contractAddress, 'ethereum');
+    // use the actual fields stored in DB
+    const contract = monitor.contract || monitor.contractAddress;
+    const chain = monitor.chain || 'ethereum';
+
+    const stats = await fetchCollectionStats(contract, chain);
+
     if (!stats?.collections?.length) {
       return interaction.reply({
-        content: '❌ Failed to fetch collection stats.',
+        content: `❌ Failed to fetch collection stats for ${monitor.name} on ${chain}.`,
         flags: 1 << 6,
       });
     }
 
     const collection = stats.collections[0];
-    const totalSupply = collection.tokenCount || 'N/A';
-    const floorPrice = collection.floorAsk?.price?.amount?.decimal || 'N/A';
+    const totalSupply = collection.tokenCount?.toString() || 'N/A';
+    const floorPrice = collection.floorAsk?.price?.amount?.decimal?.toString() || 'N/A';
 
     const embed = new EmbedBuilder()
       .setTitle(`Supply Info for ${monitor.name}`)
       .addFields(
-        { name: 'Contract', value: monitor.contractAddress, inline: false },
-        { name: 'Total Supply', value: `${totalSupply}`, inline: true },
-        { name: 'Floor Price', value: floorPrice.toString(), inline: true }
+        { name: 'Contract', value: contract, inline: false },
+        { name: 'Chain', value: chain, inline: true },
+        { name: 'Total Supply', value: totalSupply, inline: true },
+        { name: 'Floor Price', value: floorPrice, inline: true },
       )
       .setColor('#0099ff')
       .setTimestamp();
