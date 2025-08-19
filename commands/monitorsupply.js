@@ -17,26 +17,29 @@ export async function execute(interaction) {
     });
   }
 
-  let description = '';
+  const embeds = [];
   const alerts = [];
 
   for (const monitor of monitors) {
-    // normalize monitor fields
-    const id = monitor.id;
-    const name = monitor.name || 'Unnamed';
-    const contract = monitor.contract || monitor.contractAddress; // support old entries
-    const chain = monitor.chain || 'ethereum';
-    const threshold = monitor.threshold ?? null;
-    const alerted = monitor.alerted ?? false;
+    const { id, name, contractAddress, chain, threshold, alerted } = monitor;
 
     try {
-      const stats = await fetchCollectionStats(contract, chain);
+      const stats = await fetchCollectionStats(contractAddress, chain || 'ethereum');
+      let description;
+      let thumbnail = null;
+      let url = null;
+
       if (stats?.collections?.length) {
         const col = stats.collections[0];
         const tokenCount = parseInt(col.tokenCount || 0, 10);
-        const floor = col.floorAsk?.price?.amount?.decimal?.toString() || 'N/A';
+        const floor = col.floorAsk?.price?.amount?.decimal ?? 'N/A';
 
-        description += `**${name}** (${chain})\n🔗 \`${contract}\`\nSupply: **${tokenCount}** / Threshold: **${threshold ?? 'N/A'}**\nFloor: ${floor} ETH\n\n`;
+        description =
+          `Supply: **${tokenCount}** / Threshold: **${threshold ?? 'N/A'}**\n` +
+          `Floor: ${floor} ETH`;
+
+        thumbnail = col.image || null;
+        url = col.externalUrl || null;
 
         // Threshold alert check
         if (threshold && tokenCount >= threshold && !alerted) {
@@ -44,20 +47,33 @@ export async function execute(interaction) {
           updateMonitor(id, { alerted: true });
         }
       } else {
-        description += `**${name}** (${chain})\n🔗 \`${contract}\`\nNo stats found\n\n`;
+        description = '⚠️ No stats found';
       }
+
+      const embed = new EmbedBuilder()
+        .setTitle(`${name} (${chain})`)
+        .setDescription(description)
+        .setColor('#00AAFF')
+        .setTimestamp()
+        .addFields({ name: 'Contract', value: contractAddress, inline: false });
+
+      if (thumbnail) embed.setThumbnail(thumbnail);
+      if (url) embed.setURL(url);
+
+      embeds.push(embed);
     } catch (err) {
-      description += `**${name}** (${chain})\n🔗 \`${contract}\`\n⚠️ Error fetching data\n\n`;
+      const embed = new EmbedBuilder()
+        .setTitle(`${monitor.name} (${monitor.chain})`)
+        .setDescription(`⚠️ Error fetching data\n\`\`\`${err.message}\`\`\``)
+        .setColor('#FF0000')
+        .setTimestamp()
+        .addFields({ name: 'Contract', value: monitor.contractAddress, inline: false });
+
+      embeds.push(embed);
     }
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle('Monitors Supply Info')
-    .setDescription(description)
-    .setColor('#00AAFF')
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [embed] });
+  await interaction.reply({ embeds });
 
   // Send threshold alerts separately
   for (const alert of alerts) {
