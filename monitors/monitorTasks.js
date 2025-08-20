@@ -1,23 +1,16 @@
- // monitors/monitorTasks.js
-import {
-  getAllMonitors,
-  updateMonitor,
-} from '../db.js'; // Import only what you need
-
+import { getAllMonitors, updateMonitor } from '../db.js';
 import { fetchCollectionStats, alchemyGetOwnersForContract } from '../utils/api.js';
-import { formatSupplyStatus } from '../utils/format.js';
+import { EmbedBuilder } from 'discord.js';
 import { sendToDiscord } from '../utils/discord.js';
 import { logInfo, logError } from '../utils/logger.js';
 
-/**
- * Monitor a single collection for supply changes
- * @param {Object} monitor - Monitor object from database
- */
-export async function runSupplyMonitor(monitor) {
+const ALERT_CHANNEL_ID = process.env.ALERT_CHANNEL_ID;
+
+export async function runSupplyMonitor(monitor, client) {
   const { contractAddress, chain, threshold, name, slugOrContract, id, lastAlertRemaining } = monitor;
 
   try {
-    // Step 1: Get collection stats (Reservoir)
+    // Step 1: Get stats
     const stats = await fetchCollectionStats(slugOrContract || contractAddress, chain);
     if (!stats?.collections?.length) {
       logError(`[${name}] No stats found for ${contractAddress}`);
@@ -30,51 +23,52 @@ export async function runSupplyMonitor(monitor) {
     const imageUrl = collection.image || null;
     const marketplaceUrl = collection.externalUrl || null;
 
-    // Step 2: Get current holders from Alchemy
+    // Step 2: Holders
     const ownersData = await alchemyGetOwnersForContract(contractAddress, chain);
     const currentSupply = ownersData?.ownerAddresses?.length || null;
     const remaining = totalSupply !== null && currentSupply !== null
       ? totalSupply - currentSupply
       : null;
 
-    // Step 3: Threshold check
+    // Step 3: Alert logic
     if (remaining !== null && threshold !== null && remaining <= threshold) {
-      // Prevent duplicate alerts — check if alert already sent
       if (lastAlertRemaining !== remaining) {
         logInfo(`[${name}] Threshold reached! Remaining: ${remaining}`);
 
-        const embed = formatSupplyStatus({
-          name,
-          contract: contractAddress,
-          totalSupply,
-          remainingSupply: remaining,
-          floorPrice,
-          image: imageUrl,
-          marketplace: marketplaceUrl,
-        });
+        const embed = new EmbedBuilder()
+          .setTitle(`⚡ Supply Threshold Reached: ${name}`)
+          .setDescription(`The collection **${name}** on **${chain}** has hit the alert threshold.`)
+          .addFields(
+            { name: 'Contract', value: `\`${contractAddress}\`` },
+            { name: 'Total Supply', value: totalSupply?.toString() || 'N/A', inline: true },
+            { name: 'Remaining', value: remaining?.toString() || 'N/A', inline: true },
+            { name: 'Threshold', value: threshold?.toString() || 'N/A', inline: true },
+            floorPrice !== null ? { name: 'Floor Price', value: `${floorPrice} ETH`, inline: true } : null,
+            marketplaceUrl ? { name: 'Marketplace', value: `[View Collection](${marketplaceUrl})` } : null
+          )
+          .setColor(0xe74c3c)
+          .setTimestamp();
 
-        await sendToDiscord(embed);
+        if (imageUrl) embed.setThumbnail(imageUrl);
 
-        // Update DB so we don't alert again until change
+        // ✅ Send to alert channel
+        await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
+
         await updateMonitor(id, { lastAlertRemaining: remaining });
       }
     }
-
   } catch (err) {
     logError(`[${name}] Monitor error: ${err.message}`);
   }
 }
 
-/**
- * Run all monitors in parallel
- */
-export async function runAllMonitors() {
+export async function runAllMonitors(client) {
   const monitors = getAllMonitors();
-  await Promise.all(monitors.map(m => runSupplyMonitor(m)));
+  if (!monitors.length) return;
+  await Promise.all(monitors.map((m) => runSupplyMonitor(m, client)));
 }
 
-// Wrapper to run monitors periodically (every 30s)
 export function monitorTasks(client) {
-  runAllMonitors(); // initial run
-  setInterval(() => runAllMonitors(), 30_000);
+  runAllMonitors(client); // initial run
+  setInterval(() => runAllMonitors(client), 30_000);
 }

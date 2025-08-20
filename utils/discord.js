@@ -1,32 +1,23 @@
-import fetch from 'node-fetch';
+// utils/discord.js
 import { logError } from './logger.js';
 
 /**
- * Send a Discord embed or plain text message
- * @param {string} webhookUrl - Discord webhook URL
- * @param {object|string} message - Either a string or { embeds: [EmbedBuilder] }
+ * Send a message or embed to a specific Discord channel
+ * @param {object} client - Discord.js client instance
+ * @param {string} channelId - Target channel ID
+ * @param {string|object} message - Either plain text or { embeds: [...] }
  */
-export async function sendToDiscord(webhookUrl, message) {
+export async function sendToDiscord(client, channelId, message) {
   try {
-    let payload;
+    const channel = await client.channels.fetch(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} not found`);
+
     if (typeof message === 'string') {
-      payload = { content: message };
+      await channel.send({ content: message });
     } else if (message?.embeds) {
-      // Convert Discord.js EmbedBuilder to raw JSON
-      payload = { embeds: message.embeds.map(embed => embed.toJSON()) };
+      await channel.send({ embeds: message.embeds });
     } else {
       throw new Error('Invalid Discord message format');
-    }
-
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Discord webhook failed: ${res.status} ${text}`);
     }
   } catch (err) {
     logError(`Discord send error: ${err.message}`);

@@ -61,5 +61,5 @@ export async function execute(interaction) {
     .setColor('#00FF00')
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed] });
+  await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
 }

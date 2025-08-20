@@ -44,7 +44,8 @@ for (const file of commandFiles) {
 
 client.once('ready', () => {
   logInfo(`✅ Logged in as ${client.user.tag}`);
-  // Start periodic jobs, but never let them crash the process
+
+  // Start periodic jobs safely
   try { monitorTasks(client); } catch (e) { logError(`monitorTasks failed: ${e.message}`); }
   try { startWalletTracker(client); } catch (e) { logError(`walletTracker failed: ${e.message}`); }
 });
@@ -64,7 +65,7 @@ client.once('ready', () => {
   }
 })();
 
-// Public command handling (your command files should NOT set ephemeral:true)
+// Public command handling
 client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
   const command = client.commands.get(interaction.commandName);
@@ -73,7 +74,7 @@ client.on('interactionCreate', async interaction => {
     await command.execute(interaction);
   } catch (error) {
     logError(`Error executing command "${interaction.commandName}": ${error}`);
-    // Reply publicly if possible; otherwise try ephemeral fallback once
+    // Reply publicly if possible; otherwise fallback once
     try {
       await interaction.reply({ content: '❌ Error executing command.', flags: 0 }); // public
     } catch {
