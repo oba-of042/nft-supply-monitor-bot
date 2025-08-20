@@ -31,7 +31,10 @@ export async function execute(interaction) {
 
       if (stats?.collections?.length) {
         const col = stats.collections[0];
-        const tokenCount = parseInt(col.tokenCount || 0, 10);
+
+        // Safe numeric parsing
+        const rawTokenCount = parseInt(col.tokenCount || 0, 10);
+        const tokenCount = Math.max(rawTokenCount, 0); // never negative
         const floor = col.floorAsk?.price?.amount?.decimal ?? 'N/A';
 
         description =
@@ -43,7 +46,14 @@ export async function execute(interaction) {
 
         // Threshold alert check
         if (threshold && tokenCount >= threshold && !alerted) {
-          alerts.push(`🚨 **${name}** on ${chain} has reached supply **${tokenCount}** (threshold: ${threshold})!`);
+          alerts.push({
+            id,
+            name,
+            chain,
+            contractAddress,
+            tokenCount,
+            threshold,
+          });
           updateMonitor(id, { alerted: true });
         }
       } else {
@@ -73,10 +83,29 @@ export async function execute(interaction) {
     }
   }
 
+  // Reply with all supply embeds in one message
   await interaction.reply({ embeds });
 
-  // Send threshold alerts separately
+  // Send threshold alerts as rich embeds
   for (const alert of alerts) {
-    await interaction.channel.send(alert);
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle('🚨 Threshold Reached')
+        .setDescription(`**${alert.name}** on **${alert.chain}** has hit threshold!`)
+        .addFields(
+          { name: 'Contract', value: `\`${alert.contractAddress}\``, inline: false },
+          { name: 'Current Supply', value: `${alert.tokenCount}`, inline: true },
+          { name: 'Threshold', value: `${alert.threshold}`, inline: true }
+        )
+        .setColor('#FF0000')
+        .setTimestamp();
+
+      await interaction.channel.send({ embeds: [embed] });
+      console.log(
+        `[NFT-MONITOR] [ALERT] Sent threshold alert for ${alert.name} (${alert.chain})`
+      );
+    } catch (err) {
+      console.error('Discord send error (threshold alert):', err);
+    }
   }
 }
