@@ -22,22 +22,24 @@ const SUPPORTED_CHAINS = new Set(Object.keys(ALCHEMY_URLS));
 
 // ---- Helpers ----
 function getAlchemyUrl(chain) {
-  if (!SUPPORTED_CHAINS.has(chain)) {
-    logError(`[Alchemy] Unsupported chain: ${chain}`);
+  const c = chain || 'ethereum';
+  if (!SUPPORTED_CHAINS.has(c)) {
+    logError(`[Alchemy] Unsupported chain: ${c}`);
     return null;
   }
   if (!ALCHEMY_KEY) {
     logError(`[Alchemy] Missing API key`);
     return null;
   }
-  return ALCHEMY_URLS[chain];
+  return ALCHEMY_URLS[c];
 }
 
 function osHeaders() {
   return OPENSEA_KEY ? { 'x-api-key': OPENSEA_KEY } : {};
 }
 
-async function safeFetch(url, options = {}) {
+export async function safeFetch(url, options = {}) {
+  // Global limiter + exponential backoff
   await tokenBucket.acquire();
   return concurrencyLimiter.run(() =>
     withBackoff(async () => {
@@ -66,80 +68,122 @@ async function safeFetch(url, options = {}) {
   );
 }
 
-// ========== OpenSea + Alchemy: collection stats ==========
-export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
-  try {
-    if (!OPENSEA_KEY) {
-      logInfo('[OpenSea] No API key set; skipping collection stats.');
-      return { collections: [] };
-    }
+// ----- Alchemy fallback helper (supply only) -----
+async function alchemyFetchTotalSupply(contract, chain = 'ethereum') {
+  const baseUrl = getAlchemyUrl(chain);
+  if (!baseUrl) return null;
 
+  const metaUrl = `${baseUrl}/getContractMetadata?contractAddress=${contract}`;
+  try {
+    const meta = await safeFetch(metaUrl);
+    // Alchemy returns string for totalSupply (or undefined)
+    const supply = meta?.contractMetadata?.totalSupply;
+    return (supply !== undefined && supply !== null) ? String(supply) : null;
+  } catch (err) {
+    logError(`[Fallback] Alchemy supply error for ${contract} on ${chain}: ${err.message}`);
+    return null;
+  }
+}
+
+// ========== OpenSea: collection stats (slug or contract) ==========
+/**
+ * Returns a Reservoir-like shape so upstream code doesn’t need to change.
+ * {
+ *   collections: [{
+ *     tokenCount,
+ *     floorAsk: { price: { amount: { decimal } } },
+ *     image,
+ *     externalUrl
+ *   }]
+ * }
+ */
+export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
+  // Prefer OpenSea. If it fails, we’ll fall back to Alchemy for supply.
+  try {
     const isAddress = /^0x[a-fA-F0-9]{40}$/.test(slugOrContract);
     let stats = null;
     let imageUrl = null;
     let externalUrl = null;
 
-    if (isAddress) {
-      // Contract lookup → get slug
-      const contractUrl = `https://api.opensea.io/api/v2/chain/${chain}/contract/${slugOrContract}`;
-      const contractRes = await safeFetch(contractUrl, { headers: osHeaders() }).catch(() => null);
-      const slug = contractRes?.collection?.slug;
+    if (OPENSEA_KEY) {
+      if (isAddress) {
+        // 1) Find slug by contract
+        const contractUrl = `https://api.opensea.io/api/v2/chain/${chain}/contract/${slugOrContract}`;
+        const contractRes = await safeFetch(contractUrl, { headers: osHeaders() }).catch(() => null);
+        const slug = contractRes?.collection?.slug;
 
-      if (slug) {
-        const statsUrl = `https://api.opensea.io/api/v2/collections/${slug}/stats`;
+        // 2) Stats + metadata by slug
+        if (slug) {
+          const statsUrl = `https://api.opensea.io/api/v2/collections/${slug}/stats`;
+          stats = await safeFetch(statsUrl, { headers: osHeaders() }).catch(() => null);
+
+          const metaUrl = `https://api.opensea.io/api/v2/collections/${slug}`;
+          const meta = await safeFetch(metaUrl, { headers: osHeaders() }).catch(() => null);
+          imageUrl = meta?.image_url || null;
+          externalUrl = meta?.external_url || null;
+        }
+      } else {
+        // Treat as slug directly
+        const statsUrl = `https://api.opensea.io/api/v2/collections/${slugOrContract}/stats`;
         stats = await safeFetch(statsUrl, { headers: osHeaders() }).catch(() => null);
 
-        const metaUrl = `https://api.opensea.io/api/v2/collections/${slug}`;
+        const metaUrl = `https://api.opensea.io/api/v2/collections/${slugOrContract}`;
         const meta = await safeFetch(metaUrl, { headers: osHeaders() }).catch(() => null);
         imageUrl = meta?.image_url || null;
         externalUrl = meta?.external_url || null;
       }
     } else {
-      // Slug directly
-      const statsUrl = `https://api.opensea.io/api/v2/collections/${slugOrContract}/stats`;
-      stats = await safeFetch(statsUrl, { headers: osHeaders() }).catch(() => null);
-
-      const metaUrl = `https://api.opensea.io/api/v2/collections/${slugOrContract}`;
-      const meta = await safeFetch(metaUrl, { headers: osHeaders() }).catch(() => null);
-      imageUrl = meta?.image_url || null;
-      externalUrl = meta?.external_url || null;
+      logInfo('[OpenSea] No API key set; skipping OpenSea stats.');
     }
 
-    let tokenCount =
-      stats?.total?.supply != null
-        ? Number(stats.total.supply)
-        : null;
+    // Normalize OpenSea stats if present
+    if (stats) {
+      // OpenSea v2 “stats” shape:
+      // stats.total.supply, stats.total.token_count, stats.total.floor_price
+      const tokenCount =
+        stats?.total?.supply ??
+        stats?.total?.token_count ??
+        null;
 
-    let floorDecimal =
-      stats?.total?.floor_price != null
-        ? Number(stats.total.floor_price)
-        : null;
+      const floorDecimal =
+        (typeof stats?.total?.floor_price === 'number')
+          ? stats.total.floor_price
+          : (typeof stats?.total?.floor_price?.value === 'number'
+              ? stats.total.floor_price.value
+              : null);
 
-    // 🔥 Alchemy fallback if OpenSea gave nothing
-    if (tokenCount == null) {
+      return {
+        collections: [
+          {
+            tokenCount: tokenCount != null ? String(tokenCount) : null,
+            floorAsk: floorDecimal != null
+              ? { price: { amount: { decimal: Number(floorDecimal) } } }
+              : null,
+            image: imageUrl || null,
+            externalUrl: externalUrl || null,
+          },
+        ],
+      };
+    }
+
+    // ---- Fallback: Alchemy for supply only ----
+    if (isAddress) {
       logInfo(`[Fallback] Using Alchemy for supply of ${slugOrContract} on ${chain}`);
-      try {
-        const owners = await alchemyGetOwnersForContract(slugOrContract, chain);
-        if (owners?.ownerAddresses) {
-          tokenCount = owners.ownerAddresses.length;
-        }
-      } catch {
-        tokenCount = null;
-      }
+      const alchemySupply = await alchemyFetchTotalSupply(slugOrContract, chain);
+      return {
+        collections: [
+          {
+            tokenCount: alchemySupply != null ? String(alchemySupply) : null,
+            floorAsk: null,
+            image: null,
+            externalUrl: null,
+          },
+        ],
+      };
     }
 
-    return {
-      collections: [
-        {
-          tokenCount: tokenCount != null ? String(tokenCount) : null,
-          floorAsk: floorDecimal != null
-            ? { price: { amount: { decimal: floorDecimal } } }
-            : null,
-          image: imageUrl || null,
-          externalUrl: externalUrl || null,
-        },
-      ],
-    };
+    // No data
+    return { collections: [] };
   } catch (err) {
     logError(`OpenSea stats error: ${err.message}`);
     return { collections: [] };

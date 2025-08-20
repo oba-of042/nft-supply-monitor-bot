@@ -13,6 +13,14 @@ const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism'];
 // Cache: wallet+chain -> { ids:Set<string>, primed:boolean }
 const walletState = new Map();
 
+// Explorer base URLs by chain
+const EXPLORERS = {
+  ethereum: 'https://etherscan.io',
+  polygon: 'https://polygonscan.com',
+  arbitrum: 'https://arbiscan.io',
+  optimism: 'https://optimistic.etherscan.io',
+};
+
 /**
  * Start periodic wallet tracking. Resilient to API failures:
  * - Each chain call is isolated; one failure doesn’t block others.
@@ -26,7 +34,6 @@ export function startWalletTracker(client) {
       const wallets = getAllWallets();
       if (!wallets.length) return;
 
-      // Batch by wallet, then per chain
       for (const wallet of wallets) {
         const address = (wallet.address || '').trim().toLowerCase();
         if (!/^0x[a-fA-F0-9]{40}$/.test(address)) continue;
@@ -48,7 +55,6 @@ export function startWalletTracker(client) {
 }
 
 async function checkWalletOnChain(client, walletAddress, chain) {
-  // Separate state per wallet+chain
   const key = `${walletAddress}:${chain}`;
   const state = walletState.get(key) || { ids: new Set(), primed: false };
 
@@ -65,19 +71,18 @@ async function checkWalletOnChain(client, walletAddress, chain) {
   // Build the current ID set
   const currentIds = new Set();
   for (const nft of owned) {
-    const contract = nft?.contract?.address || nft?.contractAddress || nft?.contract?.toLowerCase?.() || 'unknown';
+    const contract = nft?.contract?.address || nft?.contractAddress || 'unknown';
     const tokenId = nft?.tokenId ?? nft?.id?.tokenId ?? nft?.token_id ?? 'unknown';
-    currentIds.add(`${contract}-${tokenId}`);
+    currentIds.add(`${contract.toLowerCase()}-${tokenId}`);
   }
 
-  // First run: prime the cache and do NOT alert on historical holdings
   if (!state.primed) {
     walletState.set(key, { ids: currentIds, primed: true });
     logInfo(`Primed wallet ${walletAddress} on ${chain} with ${currentIds.size} NFTs`);
     return;
   }
 
-  // Find newly seen NFTs and alert
+  // Detect new NFTs
   const newOnes = [];
   for (const id of currentIds) {
     if (!state.ids.has(id)) newOnes.push(id);
@@ -87,7 +92,7 @@ async function checkWalletOnChain(client, walletAddress, chain) {
     for (const id of newOnes) {
       const [contract, tokenId] = id.split('-');
       const nft = owned.find(n =>
-        (n?.contract?.address === contract || n?.contractAddress === contract) &&
+        (n?.contract?.address?.toLowerCase() === contract || n?.contractAddress?.toLowerCase() === contract) &&
         (String(n?.tokenId ?? n?.id?.tokenId ?? n?.token_id) === tokenId)
       );
 
@@ -95,7 +100,6 @@ async function checkWalletOnChain(client, walletAddress, chain) {
     }
   }
 
-  // Update cache with the latest snapshot
   walletState.set(key, { ids: currentIds, primed: true });
 }
 
@@ -112,34 +116,39 @@ async function safeSendWalletEmbed(client, walletAddress, chain, nft, contract, 
       return;
     }
 
-    // Compose embed
-    const name = nft?.title || nft?.metadata?.name || 'NFT';
+    const name = nft?.title || nft?.metadata?.name || `NFT #${tokenId}`;
     const image =
       nft?.media?.[0]?.gateway ||
       nft?.metadata?.image ||
       nft?.image_url ||
       null;
 
+    const explorerBase = EXPLORERS[chain] || EXPLORERS.ethereum;
+    const etherscanLink = `${explorerBase}/token/${contract}?a=${tokenId}`;
+    const walletLink = `${explorerBase}/address/${walletAddress}`;
+
     const embed = new EmbedBuilder()
-      .setTitle('🆕 NFT Detected')
-      .setDescription(`Wallet **${walletAddress}** now holds a new NFT on **${chain}**`)
+      .setTitle('🆕 New NFT Detected')
+      .setDescription(
+        `Wallet [\`${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}\`](${walletLink}) ` +
+        `minted/acquired a new NFT on **${chain}**`
+      )
       .addFields(
-        { name: 'Contract', value: `\`${contract}\``, inline: true },
-        { name: 'Token ID', value: `${tokenId}`, inline: true },
+        { name: 'Contract', value: `[${contract.slice(0, 8)}...](${explorerBase}/token/${contract})`, inline: true },
+        { name: 'Token ID', value: `[${tokenId}](${etherscanLink})`, inline: true },
+        { name: 'Name', value: name, inline: false },
       )
       .setColor(0x0099ff)
       .setTimestamp();
 
-    if (name) embed.addFields({ name: 'Name', value: name, inline: false });
     if (image) embed.setThumbnail(image);
 
-    await channel.send({ embeds: [embed] }); // public message
+    await channel.send({ embeds: [embed] });
     logInfo(`Sent wallet alert for ${walletAddress} on ${chain} (${contract} #${tokenId})`);
   } catch (err) {
-    // Swallow and log so one bad send doesn’t break the loop
     logError(`Failed to send wallet alert: ${err.message}`);
   }
 }
 
-// Alias export to match older imports if any
+// Alias export
 export { startWalletTracker as trackWalletActivity };

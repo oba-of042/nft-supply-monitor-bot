@@ -19,7 +19,9 @@ try {
   console.error('Failed to load DB:', err);
 }
 
-// Ensure defaults for old monitors
+// ------------------
+// Normalizers
+// ------------------
 function normalizeMonitor(m) {
   return {
     id: m.id || Date.now().toString(),
@@ -31,12 +33,25 @@ function normalizeMonitor(m) {
   };
 }
 
-// Save function
+function normalizeWallet(w) {
+  return {
+    address: (w.address || '').toLowerCase(),
+    chains: Array.isArray(w.chains) && w.chains.length
+      ? w.chains
+      : ['ethereum'],
+  };
+}
+
+// ------------------
+// Save helper
+// ------------------
 function save() {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
+// ------------------
 // Monitors
+// ------------------
 export function getAllMonitors() {
   if (!data.monitors) data.monitors = [];
   return data.monitors.map(normalizeMonitor);
@@ -77,21 +92,24 @@ export function removeMonitor(name) {
   return false;
 }
 
-// Wallets (example)
+// ------------------
+// Wallets
+// ------------------
 export function getAllWallets() {
-  return data.wallets || [];
+  if (!data.wallets) data.wallets = [];
+  return data.wallets.map(normalizeWallet);
 }
 
 export function addWallet(wallet) {
   if (!data.wallets) data.wallets = [];
-  data.wallets.push(wallet);
+  data.wallets.push(normalizeWallet(wallet));
   save();
 }
 
 export function removeWallet(address) {
   if (!data.wallets) return false;
   const originalLength = data.wallets.length;
-  data.wallets = data.wallets.filter(w => w.address !== address);
+  data.wallets = data.wallets.filter(w => w.address.toLowerCase() !== address.toLowerCase());
   if (data.wallets.length !== originalLength) {
     save();
     return true;
