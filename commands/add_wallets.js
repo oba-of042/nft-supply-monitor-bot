@@ -1,6 +1,6 @@
 // commands/add_wallet.js
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { addWallet, getAllWallets } from '../db.js';
+import { addWallet } from '../db.js';
 import { logInfo, logError } from '../utils/logger.js';
 
 const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'abstract'];
@@ -11,12 +11,12 @@ export default {
     .setDescription('Track a wallet for NFT activity')
     .addStringOption(option =>
       option.setName('address')
-        .setDescription('Wallet address (0x...)')
+        .setDescription('Wallet address (0x...)') // ✅ < 100 chars
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName('chains')
-        .setDescription(`Comma-separated chains (default: ethereum). Supported: ${SUPPORTED_CHAINS.join(', ')}`)
+        .setDescription('Comma-separated chains (default: ethereum)') // ✅ shortened
         .setRequired(false)
     ),
 
@@ -48,15 +48,16 @@ export default {
       // Embed confirmation
       const embed = new EmbedBuilder()
         .setTitle('👛 Wallet Tracking Enabled')
-        .setDescription(`This wallet will now be monitored for NFT activity.`)
+        .setDescription('This wallet will now be monitored for NFT activity.')
         .addFields(
           { name: 'Wallet Address', value: `\`${address}\`` },
-          { name: 'Chains', value: chains.join(', ') }
+          { name: 'Chains', value: chains.join(', ') },
+          { name: 'Supported Chains', value: SUPPORTED_CHAINS.join(', ') } // ✅ added here instead
         )
         .setColor(0x2ecc71)
         .setTimestamp();
 
-      await interaction.reply({ embeds: [embed], ephemeral: false });
+      await interaction.reply({ embeds: [embed] });
     } catch (err) {
       logError(`add_wallet failed: ${err.message}`);
       await interaction.reply({ content: '❌ Failed to add wallet.', ephemeral: true });
