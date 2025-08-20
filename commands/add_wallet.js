@@ -11,14 +11,10 @@ export const data = new SlashCommandBuilder()
   .setName('add_wallet')
   .setDescription('Track a wallet for NFT activity')
   .addStringOption(option =>
-    option.setName('address')
-      .setDescription('Wallet address (0x...)')
-      .setRequired(true)
+    option.setName('address').setDescription('Wallet address (0x...)').setRequired(true)
   )
   .addStringOption(option =>
-    option.setName('chains')
-      .setDescription('Comma-separated chains (default: ethereum)')
-      .setRequired(false)
+    option.setName('chains').setDescription('Comma-separated chains (default: ethereum)').setRequired(false)
   );
 
 export async function execute(interaction) {
@@ -26,13 +22,11 @@ export async function execute(interaction) {
     const address = interaction.options.getString('address').trim().toLowerCase();
     let chainsInput = interaction.options.getString('chains');
 
-    // Validate address
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-      await interaction.reply({ content: '❌ Invalid wallet address.', ephemeral: true });
+      await interaction.reply({ content: '❌ Invalid wallet address.', flags: 1 << 6 });
       return;
     }
 
-    // Parse chains
     let chains = ['ethereum'];
     if (chainsInput) {
       chains = chainsInput
@@ -42,11 +36,9 @@ export async function execute(interaction) {
     }
     if (!chains.length) chains = ['ethereum'];
 
-    // Save to DB
     addWallet({ address, chains });
     logInfo(`Added wallet ${address} on chains [${chains.join(', ')}]`);
 
-    // Embed confirmation
     const embed = new EmbedBuilder()
       .setTitle('👛 Wallet Tracking Enabled')
       .setDescription(`This wallet will now be monitored for NFT activity.`)
@@ -57,10 +49,13 @@ export async function execute(interaction) {
       .setColor(0x2ecc71)
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-    await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
+    await interaction.reply({ embeds: [embed], flags: 1 << 6 });
+
+    if (ALERT_CHANNEL_ID) {
+      await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
+    }
   } catch (err) {
     logError(`add_wallet failed: ${err.message}`);
-    await interaction.reply({ content: '❌ Failed to add wallet.', ephemeral: true });
+    await interaction.reply({ content: '❌ Failed to add wallet.', flags: 1 << 6 });
   }
 }

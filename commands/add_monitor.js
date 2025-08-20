@@ -9,14 +9,10 @@ export const data = new SlashCommandBuilder()
   .setName('add_monitor')
   .setDescription('Add a new NFT monitor')
   .addStringOption(option =>
-    option.setName('name')
-      .setDescription('Monitor name')
-      .setRequired(true)
+    option.setName('name').setDescription('Monitor name').setRequired(true)
   )
   .addStringOption(option =>
-    option.setName('contract')
-      .setDescription('NFT contract address')
-      .setRequired(true)
+    option.setName('contract').setDescription('NFT contract address').setRequired(true)
   )
   .addStringOption(option =>
     option.setName('chain')
@@ -31,9 +27,7 @@ export const data = new SlashCommandBuilder()
       )
   )
   .addIntegerOption(option =>
-    option.setName('threshold')
-      .setDescription('Alert when supply reaches this number')
-      .setRequired(true)
+    option.setName('threshold').setDescription('Alert when supply reaches this number').setRequired(true)
   );
 
 export async function execute(interaction) {
@@ -42,12 +36,11 @@ export async function execute(interaction) {
   const chain = interaction.options.getString('chain');
   const threshold = interaction.options.getInteger('threshold');
 
-  // Prevent duplicate by name
   const existing = getAllMonitors().find(m => m.name === name);
   if (existing) {
     return interaction.reply({
       content: `❌ Monitor **${name}** already exists.`,
-      ephemeral: true,
+      flags: 1 << 6, // ephemeral
     });
   }
 
@@ -64,12 +57,12 @@ export async function execute(interaction) {
     .setColor(0x2ecc71)
     .setTimestamp();
 
-  // reply to the user in Discord
   await interaction.reply({
     content: `✅ Monitor **${name}** added successfully.`,
-    ephemeral: true,
+    flags: 1 << 6, // ephemeral
   });
 
-  // also push notification embed to alert channel
-  await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
+  if (ALERT_CHANNEL_ID) {
+    await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
+  }
 }
