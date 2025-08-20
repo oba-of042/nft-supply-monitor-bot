@@ -1,6 +1,9 @@
 // commands/add_monitor.js
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { sendToDiscord } from '../utils/discord.js';
 import { addMonitor, getAllMonitors } from '../db.js';
+
+const ALERT_CHANNEL_ID = process.env.ALERT_CHANNEL_ID;
 
 export const data = new SlashCommandBuilder()
   .setName('add_monitor')
@@ -29,7 +32,7 @@ export const data = new SlashCommandBuilder()
   )
   .addIntegerOption(option =>
     option.setName('threshold')
-      .setDescription('Alert when supply exceeds this number')
+      .setDescription('Alert when supply reaches this number')
       .setRequired(true)
   );
 
@@ -58,8 +61,15 @@ export async function execute(interaction) {
       { name: 'Chain', value: chain, inline: true },
       { name: 'Threshold', value: threshold.toString(), inline: true }
     )
-    .setColor('#00FF00')
+    .setColor(0x2ecc71)
     .setTimestamp();
 
-  await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
+  // reply to the user in Discord
+  await interaction.reply({
+    content: `✅ Monitor **${name}** added successfully.`,
+    ephemeral: true,
+  });
+
+  // also push notification embed to alert channel
+  await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
 }
