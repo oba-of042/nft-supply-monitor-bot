@@ -5,6 +5,7 @@ import { logInfo, logError } from '../utils/logger.js';
 import { sendToDiscord } from '../utils/discord.js';
 
 const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'abstract'];
+const ALERT_CHANNEL_ID = process.env.ALERT_CHANNEL_ID;
 
 export const data = new SlashCommandBuilder()
   .setName('add_wallet')
@@ -16,7 +17,7 @@ export const data = new SlashCommandBuilder()
   )
   .addStringOption(option =>
     option.setName('chains')
-      .setDescription(`Comma-separated chains (default: ethereum). Supported: ${SUPPORTED_CHAINS.join(', ')}`)
+      .setDescription('Comma-separated chains (default: ethereum)')
       .setRequired(false)
   );
 
@@ -25,7 +26,7 @@ export async function execute(interaction) {
     const address = interaction.options.getString('address').trim().toLowerCase();
     let chainsInput = interaction.options.getString('chains');
 
-    // Validation
+    // Validate address
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
       await interaction.reply({ content: '❌ Invalid wallet address.', ephemeral: true });
       return;
@@ -41,7 +42,7 @@ export async function execute(interaction) {
     }
     if (!chains.length) chains = ['ethereum'];
 
-    // Save
+    // Save to DB
     addWallet({ address, chains });
     logInfo(`Added wallet ${address} on chains [${chains.join(', ')}]`);
 
@@ -56,9 +57,10 @@ export async function execute(interaction) {
       .setColor(0x2ecc71)
       .setTimestamp();
 
-     await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await sendToDiscord(interaction.client, ALERT_CHANNEL_ID, { embeds: [embed] });
   } catch (err) {
     logError(`add_wallet failed: ${err.message}`);
-    await sendToDiscord({ content: '❌ Failed to add wallet.', ephemeral: true });
+    await interaction.reply({ content: '❌ Failed to add wallet.', ephemeral: true });
   }
 }
