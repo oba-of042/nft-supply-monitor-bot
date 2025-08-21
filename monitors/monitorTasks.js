@@ -35,17 +35,26 @@ export async function runSupplyMonitor(monitor, client) {
       if (lastAlertRemaining !== remaining) {
         logInfo(`[${name}] Threshold reached! Remaining: ${remaining}`);
 
+        // Build fields safely (filter out nulls)
+        const fields = [
+          { name: 'Contract', value: `\`${contractAddress}\`` },
+          { name: 'Total Supply', value: totalSupply?.toString() || 'N/A', inline: true },
+          { name: 'Remaining', value: remaining?.toString() || 'N/A', inline: true },
+          { name: 'Threshold', value: threshold?.toString() || 'N/A', inline: true }
+        ];
+
+        if (floorPrice !== null) {
+          fields.push({ name: 'Floor Price', value: `${floorPrice} ETH`, inline: true });
+        }
+
+        if (marketplaceUrl) {
+          fields.push({ name: 'Marketplace', value: `[View Collection](${marketplaceUrl})` });
+        }
+
         const embed = new EmbedBuilder()
           .setTitle(`⚡ Supply Threshold Reached: ${name}`)
           .setDescription(`The collection **${name}** on **${chain}** has hit the alert threshold.`)
-          .addFields(
-            { name: 'Contract', value: `\`${contractAddress}\`` },
-            { name: 'Total Supply', value: totalSupply?.toString() || 'N/A', inline: true },
-            { name: 'Remaining', value: remaining?.toString() || 'N/A', inline: true },
-            { name: 'Threshold', value: threshold?.toString() || 'N/A', inline: true },
-            floorPrice !== null ? { name: 'Floor Price', value: `${floorPrice} ETH`, inline: true } : null,
-            marketplaceUrl ? { name: 'Marketplace', value: `[View Collection](${marketplaceUrl})` } : null
-          )
+          .addFields(fields)
           .setColor(0xe74c3c)
           .setTimestamp();
 
