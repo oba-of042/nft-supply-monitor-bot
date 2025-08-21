@@ -52,13 +52,22 @@ export async function runSupplyMonitor(monitor, client) {
         if (imageUrl) embed.setThumbnail(imageUrl);
 
         // ✅ Send to alert channel
-        await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
+        const sent = await sendToDiscord(client, ALERT_CHANNEL_ID, { embeds: [embed] });
 
-        await updateMonitor(id, { lastAlertRemaining: remaining });
+        if (sent) {
+          logInfo(`[${name}] Discord alert sent ✅`);
+          await updateMonitor(id, { lastAlertRemaining: remaining });
+        } else {
+          logError(`[${name}] Failed to send Discord alert ❌`);
+        }
       }
     }
   } catch (err) {
+    // ⬇️ Log full error details for debugging
     logError(`[${name}] Monitor error: ${err.message}`);
+    if (err?.stack) logError(err.stack);
+    if (err?.code) logError(`[${name}] Discord error code: ${err.code}`);
+    if (err?.rawError) logError(`[${name}] Discord raw error: ${JSON.stringify(err.rawError)}`);
   }
 }
 
