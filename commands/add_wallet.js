@@ -11,22 +11,34 @@ export const data = new SlashCommandBuilder()
   .setName('add_wallet')
   .setDescription('Track a wallet for NFT activity')
   .addStringOption(option =>
-    option.setName('address').setDescription('Wallet address (0x...)').setRequired(true)
+    option.setName('address')
+      .setDescription('Wallet address (0x...)')
+      .setRequired(true)
   )
   .addStringOption(option =>
-    option.setName('chains').setDescription('Comma-separated chains (default: ethereum)').setRequired(false)
+    option.setName('name')
+      .setDescription('Friendly name/label for the wallet')
+      .setRequired(true)
+  )
+  .addStringOption(option =>
+    option.setName('chains')
+      .setDescription('Comma-separated chains (default: ethereum)')
+      .setRequired(false)
   );
 
 export async function execute(interaction) {
   try {
     const address = interaction.options.getString('address').trim().toLowerCase();
+    const name = interaction.options.getString('name').trim();
     let chainsInput = interaction.options.getString('chains');
 
+    // Validate address
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
       await interaction.reply({ content: '❌ Invalid wallet address.', flags: 1 << 6 });
       return;
     }
 
+    // Parse chains
     let chains = ['ethereum'];
     if (chainsInput) {
       chains = chainsInput
@@ -36,15 +48,18 @@ export async function execute(interaction) {
     }
     if (!chains.length) chains = ['ethereum'];
 
-    addWallet({ address, chains });
-    logInfo(`Added wallet ${address} on chains [${chains.join(', ')}]`);
+    // Save to DB
+    addWallet({ address, name, chains });
+    logInfo(`Added wallet ${address} (name: ${name}) on chains [${chains.join(', ')}]`);
 
+    // Embed confirmation
     const embed = new EmbedBuilder()
       .setTitle('👛 Wallet Tracking Enabled')
       .setDescription(`This wallet will now be monitored for NFT activity.`)
       .addFields(
-        { name: 'Wallet Address', value: `\`${address}\`` },
-        { name: 'Chains', value: chains.join(', ') }
+        { name: 'Name', value: name, inline: true },
+        { name: 'Wallet Address', value: `\`${address}\``, inline: false },
+        { name: 'Chains', value: chains.join(', '), inline: false }
       )
       .setColor(0x2ecc71)
       .setTimestamp();

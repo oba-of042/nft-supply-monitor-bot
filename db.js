@@ -36,6 +36,7 @@ function normalizeMonitor(m) {
 function normalizeWallet(w) {
   return {
     address: (w.address || '').toLowerCase(),
+    name: w.name || null, // ✅ store wallet name
     chains: Array.isArray(w.chains) && w.chains.length
       ? w.chains
       : ['ethereum'],
@@ -102,14 +103,29 @@ export function getAllWallets() {
 
 export function addWallet(wallet) {
   if (!data.wallets) data.wallets = [];
-  data.wallets.push(normalizeWallet(wallet));
+  const normalized = normalizeWallet(wallet);
+
+  // ✅ Prevent duplicates by address
+  if (data.wallets.find(w => w.address === normalized.address)) {
+    return false; // duplicate, skip
+  }
+
+  data.wallets.push(normalized);
   save();
+  return true;
 }
 
-export function removeWallet(address) {
+export function removeWallet(identifier) {
   if (!data.wallets) return false;
+  const idLower = identifier.toLowerCase();
+
   const originalLength = data.wallets.length;
-  data.wallets = data.wallets.filter(w => w.address.toLowerCase() !== address.toLowerCase());
+  data.wallets = data.wallets.filter(
+    w =>
+      w.address.toLowerCase() !== idLower &&
+      (w.name ? w.name.toLowerCase() !== idLower : true)
+  );
+
   if (data.wallets.length !== originalLength) {
     save();
     return true;

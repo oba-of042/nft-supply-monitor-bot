@@ -1,7 +1,6 @@
 // commands/list_wallets.js
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { getAllWallets } from '../db.js';
-import { EmbedBuilder } from 'discord.js';
 
 export const data = new SlashCommandBuilder()
   .setName('list_wallets')
@@ -10,7 +9,7 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   const wallets = getAllWallets();
   if (!wallets.length) {
-    return interaction.reply({ content: 'No wallets tracked yet.'});
+    return interaction.reply({ content: 'No wallets tracked yet.' });
   }
 
   const embed = new EmbedBuilder()
@@ -19,8 +18,12 @@ export async function execute(interaction) {
     .setTimestamp();
 
   for (const w of wallets) {
-    embed.addFields({ name: w.address, value: `Chains: ${w.chains?.join(', ') || 'ethereum'}`, inline: false });
+    embed.addFields({
+      name: w.name ? `${w.name} (${w.address})` : w.address,
+      value: `Chains: ${w.chains?.join(', ') || 'ethereum'}`,
+      inline: false,
+    });
   }
 
-  await interaction.reply({ embeds: [embed]});
+  await interaction.reply({ embeds: [embed] });
 }

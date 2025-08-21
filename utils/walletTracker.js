@@ -42,7 +42,9 @@ export function startWalletTracker(client) {
           ? wallet.chains.filter(c => SUPPORTED_CHAINS.includes(c))
           : ['ethereum'];
 
-        await Promise.all(chains.map(chain => checkWalletOnChain(client, address, chain)));
+        await Promise.all(chains.map(chain =>
+          checkWalletOnChain(client, wallet, chain)
+        ));
       }
     } catch (err) {
       logError(`Wallet tracker polling error: ${err.message}`);
@@ -54,7 +56,8 @@ export function startWalletTracker(client) {
   setInterval(poll, POLL_INTERVAL_MS);
 }
 
-async function checkWalletOnChain(client, walletAddress, chain) {
+async function checkWalletOnChain(client, wallet, chain) {
+  const walletAddress = wallet.address;
   const key = `${walletAddress}:${chain}`;
   const state = walletState.get(key) || { ids: new Set(), primed: false };
 
@@ -96,14 +99,14 @@ async function checkWalletOnChain(client, walletAddress, chain) {
         (String(n?.tokenId ?? n?.id?.tokenId ?? n?.token_id) === tokenId)
       );
 
-      await safeSendWalletEmbed(client, walletAddress, chain, nft, contract, tokenId);
+      await safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId);
     }
   }
 
   walletState.set(key, { ids: currentIds, primed: true });
 }
 
-async function safeSendWalletEmbed(client, walletAddress, chain, nft, contract, tokenId) {
+async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId) {
   if (!ALERT_CHANNEL_ID) {
     logError('WALLET_ALERT_CHANNEL_ID (or ALERT_CHANNEL_ID) not set in env; cannot send alerts');
     return;
@@ -116,6 +119,8 @@ async function safeSendWalletEmbed(client, walletAddress, chain, nft, contract, 
       return;
     }
 
+    const walletName = wallet.name ? `**${wallet.name}**` : `\`${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\``;
+
     const name = nft?.title || nft?.metadata?.name || `NFT #${tokenId}`;
     const image =
       nft?.media?.[0]?.gateway ||
@@ -125,12 +130,12 @@ async function safeSendWalletEmbed(client, walletAddress, chain, nft, contract, 
 
     const explorerBase = EXPLORERS[chain] || EXPLORERS.ethereum;
     const etherscanLink = `${explorerBase}/token/${contract}?a=${tokenId}`;
-    const walletLink = `${explorerBase}/address/${walletAddress}`;
+    const walletLink = `${explorerBase}/address/${wallet.address}`;
 
     const embed = new EmbedBuilder()
       .setTitle('🆕 New NFT Detected')
       .setDescription(
-        `Wallet [\`${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}\`](${walletLink}) ` +
+        `Wallet ${walletName} ([view](${walletLink})) ` +
         `minted/acquired a new NFT on **${chain}**`
       )
       .addFields(
@@ -144,7 +149,7 @@ async function safeSendWalletEmbed(client, walletAddress, chain, nft, contract, 
     if (image) embed.setThumbnail(image);
 
     await channel.send({ embeds: [embed] });
-    logInfo(`Sent wallet alert for ${walletAddress} on ${chain} (${contract} #${tokenId})`);
+    logInfo(`Sent wallet alert for ${walletName} (${wallet.address}) on ${chain} (${contract} #${tokenId})`);
   } catch (err) {
     logError(`Failed to send wallet alert: ${err.message}`);
   }
