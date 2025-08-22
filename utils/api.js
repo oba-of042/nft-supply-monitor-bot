@@ -39,7 +39,6 @@ function osHeaders() {
 }
 
 export async function safeFetch(url, options = {}) {
-  // Global limiter + exponential backoff
   await tokenBucket.acquire();
   return concurrencyLimiter.run(() =>
     withBackoff(async () => {
@@ -76,7 +75,6 @@ async function alchemyFetchTotalSupply(contract, chain = 'ethereum') {
   const metaUrl = `${baseUrl}/getContractMetadata?contractAddress=${contract}`;
   try {
     const meta = await safeFetch(metaUrl);
-    // Alchemy returns string for totalSupply (or undefined)
     const supply = meta?.contractMetadata?.totalSupply;
     return (supply !== undefined && supply !== null) ? String(supply) : null;
   } catch (err) {
@@ -85,20 +83,8 @@ async function alchemyFetchTotalSupply(contract, chain = 'ethereum') {
   }
 }
 
-// ========== OpenSea: collection stats (slug or contract) ==========
-/**
- * Returns a Reservoir-like shape so upstream code doesn’t need to change.
- * {
- *   collections: [{
- *     tokenCount,
- *     floorAsk: { price: { amount: { decimal } } },
- *     image,
- *     externalUrl
- *   }]
- * }
- */
+// ========== OpenSea: collection stats ==========
 export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
-  // Prefer OpenSea. If it fails, we’ll fall back to Alchemy for supply.
   try {
     const isAddress = /^0x[a-fA-F0-9]{40}$/.test(slugOrContract);
     let stats = null;
@@ -107,12 +93,10 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
 
     if (OPENSEA_KEY) {
       if (isAddress) {
-        // 1) Find slug by contract
         const contractUrl = `https://api.opensea.io/api/v2/chain/${chain}/contract/${slugOrContract}`;
         const contractRes = await safeFetch(contractUrl, { headers: osHeaders() }).catch(() => null);
         const slug = contractRes?.collection?.slug;
 
-        // 2) Stats + metadata by slug
         if (slug) {
           const statsUrl = `https://api.opensea.io/api/v2/collections/${slug}/stats`;
           stats = await safeFetch(statsUrl, { headers: osHeaders() }).catch(() => null);
@@ -123,7 +107,6 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
           externalUrl = meta?.external_url || null;
         }
       } else {
-        // Treat as slug directly
         const statsUrl = `https://api.opensea.io/api/v2/collections/${slugOrContract}/stats`;
         stats = await safeFetch(statsUrl, { headers: osHeaders() }).catch(() => null);
 
@@ -132,14 +115,9 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
         imageUrl = meta?.image_url || null;
         externalUrl = meta?.external_url || null;
       }
-    } else {
-      logInfo('[OpenSea] No API key set; skipping OpenSea stats.');
     }
 
-    // Normalize OpenSea stats if present
     if (stats) {
-      // OpenSea v2 “stats” shape:
-      // stats.total.supply, stats.total.token_count, stats.total.floor_price
       const tokenCount =
         stats?.total?.supply ??
         stats?.total?.token_count ??
@@ -166,7 +144,6 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
       };
     }
 
-    // ---- Fallback: Alchemy for supply only ----
     if (isAddress) {
       logInfo(`[Fallback] Using Alchemy for supply of ${slugOrContract} on ${chain}`);
       const alchemySupply = await alchemyFetchTotalSupply(slugOrContract, chain);
@@ -182,7 +159,6 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
       };
     }
 
-    // No data
     return { collections: [] };
   } catch (err) {
     logError(`OpenSea stats error: ${err.message}`);
@@ -190,7 +166,7 @@ export async function fetchCollectionStats(slugOrContract, chain = 'ethereum') {
   }
 }
 
-// ========== Alchemy: ownership & wallet NFTs ==========
+// ========== Alchemy: ownership ==========
 export async function alchemyGetOwnersForContract(contract, chain = 'ethereum') {
   const baseUrl = getAlchemyUrl(chain);
   if (!baseUrl) return { ownerAddresses: [] };
@@ -207,6 +183,7 @@ export async function alchemyGetOwnersForContract(contract, chain = 'ethereum') 
   }
 }
 
+// ========== Alchemy: wallet NFTs ==========
 export async function alchemyGetNFTsForOwner(owner, chain = 'ethereum') {
   const baseUrl = getAlchemyUrl(chain);
   if (!baseUrl) {
@@ -224,4 +201,57 @@ export async function alchemyGetNFTsForOwner(owner, chain = 'ethereum') {
     else logError(`[Alchemy] NFTsForOwner error for ${owner} on ${chain}: ${err.message}`);
     return { ownedNfts: [] };
   }
+}
+
+// ========== Alchemy: generic asset transfers ==========
+export async function alchemyGetAssetTransfers({
+  fromBlock = '0x0',
+  toBlock = 'latest',
+  fromAddress,
+  toAddress,
+  contract,
+  tokenId,
+  category = ['erc721', 'erc1155'],
+  chain = 'ethereum',
+  maxCount = 5,
+}) {
+  const baseUrl = getAlchemyUrl(chain);
+  if (!baseUrl) return [];
+
+  const url = `${baseUrl.replace('/nft/', '/v2/')}/getAssetTransfers`;
+  const body = {
+    fromBlock,
+    toBlock,
+    category,
+    maxCount: `0x${maxCount.toString(16)}`,
+    withMetadata: true,
+  };
+  if (fromAddress) body.fromAddress = fromAddress;
+  if (toAddress) body.toAddress = toAddress;
+  if (contract) body.contractAddresses = [contract];
+
+  try {
+    const data = await safeFetch(url, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    let transfers = data?.result?.transfers || [];
+    if (tokenId) {
+      transfers = transfers.filter(tx => tx?.erc721TokenId === tokenId || tx?.erc1155Metadata?.some(m => m.tokenId === tokenId));
+    }
+    return transfers;
+  } catch (err) {
+    logError(`[Alchemy] AssetTransfers error for ${contract || 'all'} on ${chain}: ${err.message}`);
+    return [];
+  }
+}
+
+// ========== Alchemy: recent transfers (mint txs only) ==========
+export async function alchemyGetRecentTransfers(contract, chain = 'ethereum', limit = 5) {
+  return alchemyGetAssetTransfers({
+    fromAddress: "0x0000000000000000000000000000000000000000",
+    contract,
+    chain,
+    maxCount: limit,
+  });
 }

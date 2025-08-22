@@ -1,5 +1,5 @@
 // utils/walletTracker.js
-import { alchemyGetNFTsForOwner } from './api.js';
+import { alchemyGetNFTsForOwner, alchemyGetAssetTransfers } from './api.js';
 import { getAllWallets } from '../db.js';
 import { logInfo, logError } from './logger.js';
 import { EmbedBuilder } from 'discord.js';
@@ -13,6 +13,19 @@ const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism'];
 // Cache: wallet+chain -> { ids:Set<string>, primed:boolean }
 const walletState = new Map();
 
+// Recent alerts (dedupe within TTL)
+const recentAlerts = new Map();
+const ALERT_TTL_MS = 10 * 60 * 1000; // 10 min
+
+function shouldAlert(key) {
+  const now = Date.now();
+  if (recentAlerts.has(key) && now - recentAlerts.get(key) < ALERT_TTL_MS) {
+    return false;
+  }
+  recentAlerts.set(key, now);
+  return true;
+}
+
 // Explorer base URLs by chain
 const EXPLORERS = {
   ethereum: 'https://etherscan.io',
@@ -22,9 +35,7 @@ const EXPLORERS = {
 };
 
 /**
- * Start periodic wallet tracking. Resilient to API failures:
- * - Each chain call is isolated; one failure doesn’t block others.
- * - First scan “primes” cache to avoid backfilling a flood of embeds.
+ * Start periodic wallet tracking
  */
 export function startWalletTracker(client) {
   logInfo('Starting wallet tracker...');
@@ -51,8 +62,7 @@ export function startWalletTracker(client) {
     }
   }
 
-  // Kick off immediately, then on interval
-  poll();
+  poll(); // first run
   setInterval(poll, POLL_INTERVAL_MS);
 }
 
@@ -71,12 +81,20 @@ async function checkWalletOnChain(client, wallet, chain) {
 
   const owned = Array.isArray(data?.ownedNfts) ? data.ownedNfts : [];
 
-  // Build the current ID set
+  // Build normalized ID set
   const currentIds = new Set();
   for (const nft of owned) {
-    const contract = nft?.contract?.address || nft?.contractAddress || 'unknown';
-    const tokenId = nft?.tokenId ?? nft?.id?.tokenId ?? nft?.token_id ?? 'unknown';
-    currentIds.add(`${contract.toLowerCase()}-${tokenId}`);
+    const contract = (nft?.contract?.address || nft?.contractAddress || '').toLowerCase();
+    const rawId = nft?.tokenId ?? nft?.id?.tokenId ?? nft?.token_id ?? '0';
+    let tokenId;
+    try {
+      tokenId = BigInt(rawId).toString();
+    } catch {
+      tokenId = String(rawId);
+    }
+    if (contract && tokenId) {
+      currentIds.add(`${contract}-${tokenId}`);
+    }
   }
 
   if (!state.primed) {
@@ -93,20 +111,33 @@ async function checkWalletOnChain(client, wallet, chain) {
 
   if (newOnes.length) {
     for (const id of newOnes) {
+      if (!shouldAlert(id)) continue; // skip if recently alerted
+
       const [contract, tokenId] = id.split('-');
       const nft = owned.find(n =>
         (n?.contract?.address?.toLowerCase() === contract || n?.contractAddress?.toLowerCase() === contract) &&
         (String(n?.tokenId ?? n?.id?.tokenId ?? n?.token_id) === tokenId)
       );
 
-      await safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId);
+      // 🔍 Fetch tx hash for this acquisition
+      let txHash = null;
+      try {
+        const transfers = await alchemyGetAssetTransfers(walletAddress, chain, contract, tokenId);
+        if (Array.isArray(transfers) && transfers.length) {
+          txHash = transfers[0].hash; // most recent transfer hash
+        }
+      } catch (err) {
+        logError(`Error fetching transfer for ${contract} #${tokenId}: ${err.message}`);
+      }
+
+      await safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId, txHash);
     }
   }
 
   walletState.set(key, { ids: currentIds, primed: true });
 }
 
-async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId) {
+async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId, txHash) {
   if (!ALERT_CHANNEL_ID) {
     logError('WALLET_ALERT_CHANNEL_ID (or ALERT_CHANNEL_ID) not set in env; cannot send alerts');
     return;
@@ -119,7 +150,8 @@ async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId
       return;
     }
 
-    const walletName = wallet.name ? `**${wallet.name}**` : `\`${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\``;
+    const walletName = wallet.name ? `**${wallet.name}**` :
+      `\`${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\``;
 
     const name = nft?.title || nft?.metadata?.name || `NFT #${tokenId}`;
     const image =
@@ -146,6 +178,9 @@ async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId
       .setColor(0x0099ff)
       .setTimestamp();
 
+    if (txHash) {
+      embed.addFields({ name: 'Tx', value: `[View Tx](${explorerBase}/tx/${txHash})`, inline: false });
+    }
     if (image) embed.setThumbnail(image);
 
     await channel.send({ embeds: [embed] });
