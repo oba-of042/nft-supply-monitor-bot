@@ -122,7 +122,7 @@ async function checkWalletOnChain(client, wallet, chain) {
       // 🔍 Fetch tx hash for this acquisition
       let txHash = null;
       try {
-        const transfers = await alchemyGetAssetTransfers(walletAddress, chain, contract, tokenId);
+        const transfers = await alchemyGetAssetTransfers({toAddress: walletAddress, chain, contract, tokenId, maxCount:1,});
         if (Array.isArray(transfers) && transfers.length) {
           txHash = transfers[0].hash; // most recent transfer hash
         }
