@@ -13,16 +13,43 @@ const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism'];
 // Cache: wallet+chain -> { ids:Set<string>, primed:boolean }
 const walletState = new Map();
 
-// Recent alerts (dedupe within TTL)
+// Recent alerts (dedupe)
 const recentAlerts = new Map();
 const ALERT_TTL_MS = 10 * 60 * 1000; // 10 min
 
 function shouldAlert(key) {
   const now = Date.now();
-  if (recentAlerts.has(key) && now - recentAlerts.get(key) < ALERT_TTL_MS) {
+  const [wallet, chain] = key.split(':');
+  const walletKey = `${wallet}:${chain}`;
+
+  // Init store if not exists
+  if (!recentAlerts.has(walletKey)) {
+    recentAlerts.set(walletKey, { list: [], timestamps: new Map() });
+  }
+
+  const store = recentAlerts.get(walletKey);
+
+  // TTL check
+  if (store.timestamps.has(key) && now - store.timestamps.get(key) < ALERT_TTL_MS) {
     return false;
   }
-  recentAlerts.set(key, now);
+
+  // Rolling 50 check
+  if (store.list.includes(key)) {
+    return false;
+  }
+
+  // Record new key
+  store.timestamps.set(key, now);
+  store.list.push(key);
+
+  // Keep only last 50
+  if (store.list.length > 50) {
+    const removed = store.list.shift();
+    store.timestamps.delete(removed);
+  }
+
+  recentAlerts.set(walletKey, store);
   return true;
 }
 
@@ -110,31 +137,38 @@ async function checkWalletOnChain(client, wallet, chain) {
   }
 
   if (newOnes.length) {
-    for (const id of newOnes) {
-      if (!shouldAlert(id)) continue; // skip if recently alerted
+    // ✅ update state.ids first to prevent duplicate detection on next poll
+    for (const id of newOnes) state.ids.add(id);
 
+    for (const id of newOnes) {
       const [contract, tokenId] = id.split('-');
       const nft = owned.find(n =>
         (n?.contract?.address?.toLowerCase() === contract || n?.contractAddress?.toLowerCase() === contract) &&
-        (String(n?.tokenId ?? n?.id?.tokenId ?? n?.token_id) === tokenId)
+        (BigInt(n?.tokenId ?? n?.id?.tokenId ?? n?.token_id).toString() === tokenId)
       );
 
       // 🔍 Fetch tx hash for this acquisition
       let txHash = null;
       try {
-        const transfers = await alchemyGetAssetTransfers({toAddress: walletAddress, chain, contract, tokenId, maxCount:1,});
+        const transfers = await alchemyGetAssetTransfers({
+          toAddress: walletAddress, chain, contract, tokenId, maxCount: 1,
+        });
         if (Array.isArray(transfers) && transfers.length) {
-          txHash = transfers[0].hash; // most recent transfer hash
+          txHash = transfers[0].hash;
         }
       } catch (err) {
         logError(`Error fetching transfer for ${contract} #${tokenId}: ${err.message}`);
       }
 
+      // build dedupe key
+      const alertKey = `${walletAddress}:${chain}:${contract}:${tokenId}:${txHash || 'notx'}`;
+      if (!shouldAlert(alertKey)) continue;
+
       await safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId, txHash);
     }
   }
 
-  walletState.set(key, { ids: currentIds, primed: true });
+  walletState.set(key, { ids: state.ids, primed: true });
 }
 
 async function safeSendWalletEmbed(client, wallet, chain, nft, contract, tokenId, txHash) {

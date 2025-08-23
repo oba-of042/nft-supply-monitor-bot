@@ -203,7 +203,7 @@ export async function alchemyGetNFTsForOwner(owner, chain = 'ethereum') {
   }
 }
 
-// ========== Alchemy: generic asset transfers ==========
+// ========== Alchemy: generic asset transfers (normalized) ==========
 export async function alchemyGetAssetTransfers({
   fromBlock = '0x0',
   toBlock = 'latest',
@@ -235,18 +235,36 @@ export async function alchemyGetAssetTransfers({
       method: 'POST',
       body: JSON.stringify(body),
     });
+
     let transfers = data?.result?.transfers || [];
+
     if (tokenId) {
-      transfers = transfers.filter(tx => tx?.erc721TokenId === tokenId || tx?.erc1155Metadata?.some(m => m.tokenId === tokenId));
+      transfers = transfers.filter(
+        tx =>
+          tx?.erc721TokenId === tokenId ||
+          tx?.erc1155Metadata?.some(m => m.tokenId === tokenId)
+      );
     }
-    return transfers;
+
+    // 🔑 Normalize response
+    const normalized = transfers.map(tx => ({
+      hash: tx?.hash || tx?.transactionHash || null,
+      from: tx?.from || tx?.fromAddress || null,
+      to: tx?.to || tx?.toAddress || null,
+      tokenId:
+        tx?.erc721TokenId ||
+        (Array.isArray(tx?.erc1155Metadata) && tx.erc1155Metadata[0]?.tokenId) ||
+        null,
+    }));
+
+    return normalized.filter(t => t.hash && t.from && t.to);
   } catch (err) {
     logError(`[Alchemy] AssetTransfers error for ${contract || 'all'} on ${chain}: ${err.message}`);
     return [];
   }
 }
 
-// ========== Alchemy: recent transfers (mint txs only) ==========
+// ========== Alchemy: recent transfers (mint txs only, normalized) ==========
 export async function alchemyGetRecentTransfers(contract, chain = 'ethereum', limit = 5) {
   return alchemyGetAssetTransfers({
     fromAddress: "0x0000000000000000000000000000000000000000",
